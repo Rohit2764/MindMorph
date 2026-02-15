@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# VS Code
+.vscode/
+
+# DeepFace model cache
+~/.deepface/
+deepface_models/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+node_modules/

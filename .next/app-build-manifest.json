@@ -1,0 +1,23 @@
+{
+  "pages": {
+    "/page": [
+      "static/chunks/894a8_next_dist_242d1d01._.js",
+      "static/chunks/OneDrive_Desktop_mindmorph-new_src_app_favicon_ico_mjs_ac81531c._.js",
+      "static/chunks/[root-of-the-server]__d09bba9c._.css",
+      "static/chunks/OneDrive_Desktop_mindmorph-new_src_app_layout_tsx_47bf13be._.js",
+      "static/chunks/894a8_next_dist_client_components_builtin_global-error_458b94cf.js",
+      "static/chunks/894a8_f328fd24._.js",
+      "static/chunks/OneDrive_Desktop_mindmorph-new_src_c7caa33f._.js",
+      "static/chunks/OneDrive_Desktop_mindmorph-new_src_app_page_tsx_458b94cf._.js",
+      "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_079a46a1._.js",
+      "static/chunks/894a8_next_dist_compiled_react-dom_c64e71c6._.js",
+      "static/chunks/894a8_next_dist_compiled_next-devtools_index_7b3110a6.js",
+      "static/chunks/894a8_next_dist_compiled_4264fac0._.js",
+      "static/chunks/894a8_next_dist_client_ec829ad3._.js",
+      "static/chunks/894a8_next_dist_d050de3a._.js",
+      "static/chunks/894a8_@swc_helpers_cjs_4e0b2cf9._.js",
+      "static/chunks/OneDrive_Desktop_mindmorph-new_a0ff3932._.js",
+      "static/chunks/turbopack-OneDrive_Desktop_mindmorph-new_68b3cb4b._.js"
+    ]
+  }
+}
