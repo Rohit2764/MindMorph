@@ -26,3 +26,33 @@ deepface_models/
 Thumbs.db
 
 node_modules/
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Models
+models/
+*.keras
+*.h5
+
+# Dataset
+dataset/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

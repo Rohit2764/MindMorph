@@ -105,9 +105,9 @@ export const useEmotionSocket = () => {
             const reader = new FileReader();
             reader.onloadend = () => {
               const base64data = reader.result as string;
-              socketRef.current?.emit("audio_event", {
-                wav_b64: base64data,
-                timestamp: Date.now(),
+              socketRef.current?.emit("audio_frame", {
+                  audio: base64data.split(",")[1], // send only base64 payload
+                  timestamp: Date.now(),
               });
             };
             reader.readAsDataURL(wavBlob);
@@ -141,7 +141,7 @@ useEffect(() => {
     setIsConnected(false);
   });
 
-  socket.on("emotion_update", (data: EmotionData) => {
+  socket.on("final_emotion_update", (data: EmotionData) => {
     console.log("🧠 Fused Emotion received:", data);
     setEmotion(data);
     console.log("✅ Emotion state updated to:", data.label);
@@ -149,10 +149,7 @@ useEffect(() => {
 
   socket.on("connect_error", (err) => console.error("Socket error:", err));
 
-  // Add ping/pong handling to keep connection alive
-  socket.on("ping", () => {
-    socket.emit("pong");
-  });
+  
 
   // ✅ Cleanup on unmount
   return () => {

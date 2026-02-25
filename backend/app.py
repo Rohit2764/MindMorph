@@ -1,201 +1,272 @@
-import eventlet
-eventlet.monkey_patch()
-
 import base64
 import cv2
 import numpy as np
+import logging
+import sys
+import time
+from collections import deque, defaultdict
+
 from flask import Flask
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from deepface import DeepFace
-import logging
-from collections import deque
-import sys
-import time
+from services.speech_emotion import predict_speech_emotion
 
-# --- Suppress TensorFlow warnings ---
-logging.getLogger('tensorflow').setLevel(logging.ERROR)
+# ==================================
+# Suppress TensorFlow logs
+# ==================================
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
+# ==================================
+# Flask + SocketIO Setup
+# ==================================
 app = Flask(__name__)
 CORS(app)
 
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    max_http_buffer_size=5_000_000,
-    ping_timeout=120,
-    ping_interval=30
+    async_mode="threading",
+    logger=False,
+    engineio_logger=False
 )
 
-print("\n--- 🚀 MindMorph Production Emotion Server ---")
+print("\n🚀 MindMorph Multimodal Emotion Server")
 
-# --- GLOBAL STATE ---
-EMOTION_HISTORY = deque(maxlen=10)
-LAST_SENT_EMOTION = "neutral"
-LAST_SENT_TIME = 0
+# ==================================
+# CONFIGURATION
+# ==================================
+FRAME_SKIP = 2
+FACE_CONF_THRESHOLD = 0.70
+FACE_EMOTION_THRESHOLD = 0.45
+
+SPEECH_CONF_THRESHOLD = 0.55
+
+FUSION_FACE_WEIGHT = 0.6
+FUSION_SPEECH_WEIGHT = 0.4
+
+FUSION_STABILITY_THRESHOLD = 1
+FUSION_UPDATE_INTERVAL = 0.4
+
+# ==================================
+# GLOBAL STATE
+# ==================================
 FRAME_COUNT = 0
 
-STABILITY_THRESHOLD = 1
-FRAME_SKIP = 1
-EMOTION_UPDATE_INTERVAL = 0.5
+FUSION_HISTORY = deque(maxlen=5)
 
-# --- Preload Models Once ---
-print("⏳ Loading DeepFace models once...")
+LAST_FUSED_EMOTION = None
+LAST_FUSED_TIME = 0
+
+CURRENT_FACE = None
+CURRENT_SPEECH = None
+
+# ==================================
+# PRELOAD FACE MODEL
+# ==================================
+print("⏳ Loading Face Models...")
 
 try:
-    dummy_image = np.zeros((100, 100, 3), dtype=np.uint8)
-
-    print("  - Pre-loading Emotion model...")
-    DeepFace.analyze(
-        dummy_image,
-        actions=['emotion'],
-        enforce_detection=False
-    )
-
-    print("  - Pre-loading Face Detector...")
-    DeepFace.extract_faces(
-        dummy_image,
-        detector_backend='mtcnn',
-        enforce_detection=False
-    )
-
-    print("✅ All DeepFace models loaded successfully!")
-
+    dummy = np.zeros((100, 100, 3), dtype=np.uint8)
+    DeepFace.analyze(dummy, actions=["emotion"], enforce_detection=False)
+    DeepFace.extract_faces(dummy, detector_backend="retinaface", enforce_detection=False)
+    print("✅ Face Models Ready")
 except Exception as e:
-    print(f"🔥 FATAL: Could not load DeepFace models. Error: {e}")
+    print("🔥 Model loading failed:", e)
     sys.exit(1)
 
-
+# ==================================
+# FACE PREPROCESSING
+# ==================================
 def preprocess_frame(frame):
-    """Optimized preprocessing for real-time detection."""
+    h, w = frame.shape[:2]
 
-    height, width = frame.shape[:2]
+    if w > 480:
+        scale = 480 / w
+        frame = cv2.resize(frame, (480, int(h * scale)))
 
-    if width > 640:
-        scale = 640 / width
-        frame = cv2.resize(frame, (640, int(height * scale)))
-
-    # CLAHE contrast enhancement
-    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
-    lab = cv2.merge([l, a, b])
-    frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-    # ✅ FIXED OpenCV call (positional arguments only)
-    frame = cv2.fastNlMeansDenoisingColored(
-        frame,
-        None,
-        10,  # h (luminance strength)
-        10,  # hColor (color strength)
-        7,   # templateWindowSize
-        21   # searchWindowSize
-    )
+    gamma = 1.3
+    invGamma = 1.0 / gamma
+    table = np.array([(i / 255.0) ** invGamma * 255
+                      for i in np.arange(256)]).astype("uint8")
+    frame = cv2.LUT(frame, table)
 
     return frame
 
 
-def analyze_emotion(face_img):
+def analyze_face(frame):
     try:
-        analysis = DeepFace.analyze(
-            face_img,
-            actions=['emotion'],
+        faces = DeepFace.extract_faces(
+            img_path=frame,
+            detector_backend="opencv",
             enforce_detection=False
         )
 
-        if isinstance(analysis, list):
-            return analysis[0]['dominant_emotion']
+        if not faces:
+            return None, 0.0
 
-        return analysis['dominant_emotion']
+        face = faces[0]
+
+        if face["confidence"] < FACE_CONF_THRESHOLD:
+            return None, 0.0
+
+        face_img = (face["face"] * 255).astype(np.uint8)
+        face_img = cv2.resize(face_img, (224, 224))
+
+        result = DeepFace.analyze(
+            face_img,
+            actions=["emotion"],
+            enforce_detection=False
+        )
+
+        if isinstance(result, list):
+            result = result[0]
+
+        emotion_scores = result["emotion"]
+        emotion_scores = {k: v / 100 for k, v in emotion_scores.items()}
+
+        dominant = max(emotion_scores, key=emotion_scores.get)
+        confidence = emotion_scores[dominant]
+
+        if confidence >= FACE_EMOTION_THRESHOLD:
+            return dominant, confidence
+
+        return None, 0.0
 
     except Exception:
-        return None
+        return None, 0.0
 
 
-@socketio.on('connect')
-def handle_connect():
-    print('✅ Client connected.')
-    emit('connection_ack', {'status': 'connected'})
+# ==================================
+# FUSION ENGINE
+# ==================================
+def fuse_emotions(face_data, speech_data):
+
+    if face_data and not speech_data:
+        return face_data
+
+    if speech_data and not face_data:
+        return speech_data
+
+    if face_data and speech_data:
+        face_emotion, face_conf = face_data
+        speech_emotion, speech_conf = speech_data
+
+        if face_emotion == speech_emotion:
+            return face_emotion, (face_conf * 0.6 + speech_conf * 0.4)
+
+        if speech_conf > 0.80:
+            return speech_emotion, speech_conf
+
+        score = defaultdict(float)
+        score[face_emotion] += face_conf * FUSION_FACE_WEIGHT
+        score[speech_emotion] += speech_conf * FUSION_SPEECH_WEIGHT
+
+        final_emotion = max(score, key=score.get)
+        return final_emotion, score[final_emotion]
+
+    return None, 0.0
 
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('❌ Client disconnected.')
+def handle_fusion():
+    global LAST_FUSED_EMOTION, LAST_FUSED_TIME
+
+    fused_emotion, fused_conf = fuse_emotions(CURRENT_FACE, CURRENT_SPEECH)
+
+    if not fused_emotion:
+        return
+
+    FUSION_HISTORY.append(fused_emotion)
+
+    stable = max(set(FUSION_HISTORY), key=FUSION_HISTORY.count)
+
+    if FUSION_HISTORY.count(stable) >= FUSION_STABILITY_THRESHOLD:
+
+        current_time = time.time()
+
+        if (
+            stable != LAST_FUSED_EMOTION
+            or (current_time - LAST_FUSED_TIME) >= FUSION_UPDATE_INTERVAL
+        ):
+            LAST_FUSED_EMOTION = stable
+            LAST_FUSED_TIME = current_time
+
+            print("🎯 FINAL EMOTION:", stable)
+
+            socketio.emit(
+                "final_emotion_update",
+                {
+                    "label": stable,
+                    "confidence": fused_conf
+                },
+                broadcast=True
+            )
+
+# ==================================
+# SOCKET EVENTS
+# ==================================
+@socketio.on("connect")
+def connect():
+    print("✅ Client connected")
+    emit("connection_ack", {"status": "connected"})
 
 
-@socketio.on('video_frame')
-def handle_video_frame(data):
-    global FRAME_COUNT, LAST_SENT_EMOTION, LAST_SENT_TIME
+@socketio.on("video_frame")
+def handle_video(data):
+    global FRAME_COUNT, CURRENT_FACE
+
+    FRAME_COUNT += 1
+    if FRAME_COUNT % FRAME_SKIP != 0:
+        return
 
     try:
-        FRAME_COUNT += 1
-
-        if FRAME_COUNT % FRAME_SKIP != 0:
+        frame_b64 = data.get("frame")
+        if not frame_b64:
             return
 
-        frame_b64 = data.get('frame') if isinstance(data, dict) else data
-        if not frame_b64 or not isinstance(frame_b64, str):
-            return
-
-        image_data = base64.b64decode(frame_b64.split(',')[1])
-        nparr = np.frombuffer(image_data, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        image_data = base64.b64decode(frame_b64.split(",")[1])
+        np_arr = np.frombuffer(image_data, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
         if frame is None:
             return
 
         frame = preprocess_frame(frame)
 
-        result = DeepFace.extract_faces(
-            img_path=frame,
-            detector_backend='mtcnn',
-            enforce_detection=False
-        )
-
-        if not result or result[0]['confidence'] <= 0.50:
-            return
-
-        face_img = (result[0]['face'] * 255).astype(np.uint8)
-        face_img = cv2.resize(face_img, (224, 224))
-
-        emotion = analyze_emotion(face_img)
+        emotion, confidence = analyze_face(frame)
 
         if emotion:
-            EMOTION_HISTORY.append(emotion)
-
-            if EMOTION_HISTORY.count(emotion) >= STABILITY_THRESHOLD:
-                current_time = time.time()
-
-                if (
-                    emotion != LAST_SENT_EMOTION
-                    or (current_time - LAST_SENT_TIME) >= EMOTION_UPDATE_INTERVAL
-                ):
-                    LAST_SENT_EMOTION = emotion
-                    LAST_SENT_TIME = current_time
-
-                    print(f"🎯 Emotion: {emotion}")
-
-                    socketio.emit(
-                        'emotion_update',
-                        {'label': emotion, 'confidence': 1},
-                        broadcast=True
-                    )
+            CURRENT_FACE = (emotion, confidence)
+            handle_fusion()
 
     except Exception as e:
-        print(f"🔥 Error processing frame: {e}")
+        print("🔥 Face handler error:", e)
 
 
-@socketio.on('audio_event')
-def handle_audio_event(data):
-    pass
+@socketio.on("audio_frame")
+def handle_audio(data):
+    global CURRENT_SPEECH
+
+    try:
+        audio_b64 = data.get("audio")
+        if not audio_b64:
+            return
+
+        audio_bytes = base64.b64decode(audio_b64)
+
+        emotion, confidence = predict_speech_emotion(audio_bytes)
+
+        if emotion and confidence >= SPEECH_CONF_THRESHOLD:
+            CURRENT_SPEECH = (emotion, confidence)
+            handle_fusion()
+
+    except Exception as e:
+        print("🔥 Audio handler error:", e)
 
 
-@socketio.on('behavior_event')
-def handle_behavior_event(data):
-    pass
-
-
-if __name__ == '__main__':
-    print("Starting server on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000)
+# ==================================
+# RUN SERVER
+# ==================================
+if __name__ == "__main__":
+    print("🔥 Server running on http://0.0.0.0:5000")
+    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
