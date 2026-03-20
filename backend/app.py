@@ -5,6 +5,7 @@ import logging
 import sys
 import time
 from collections import deque, defaultdict
+from db import save_emotion_log
 
 from flask import Flask
 from flask_socketio import SocketIO, emit
@@ -193,14 +194,18 @@ def handle_fusion():
 
             print("🎯 FINAL EMOTION:", stable)
 
-            socketio.emit(
-                "final_emotion_update",
-                {
-                    "label": stable,
-                    "confidence": fused_conf
-                },
-                broadcast=True
-            )
+            # ✅ CREATE PAYLOAD
+            payload = {
+                "label": stable,
+                "confidence": float(fused_conf),
+                "timestamp": time.time()
+            }
+
+            # ✅ SEND TO FRONTEND
+            socketio.emit("final_emotion_update", payload)
+
+            # ✅ SAVE TO DATABASE (THIS WAS MISSING)
+            save_emotion_log(payload)
 
 # ==================================
 # SOCKET EVENTS
