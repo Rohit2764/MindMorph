@@ -5,10 +5,11 @@ import logging
 import sys
 import time
 from collections import deque, defaultdict
-from db import save_emotion_log
+from db import save_emotion_log, emotion_collection
 
 from flask import Flask
 from flask_socketio import SocketIO, emit
+from flask import jsonify
 from flask_cors import CORS
 from deepface import DeepFace
 from services.speech_emotion import predict_speech_emotion
@@ -267,6 +268,37 @@ def handle_audio(data):
 
     except Exception as e:
         print("🔥 Audio handler error:", e)
+
+@app.route("/analytics", methods=["GET"])
+def get_analytics():
+    try:
+        data = list(emotion_collection.find({}, {"_id": 0}))
+
+        # Basic aggregation
+        emotion_counts = {}
+        timeline = []
+
+        for entry in data:
+            label = entry.get("label")
+            ts = entry.get("timestamp")
+
+            if label:
+                emotion_counts[label] = emotion_counts.get(label, 0) + 1
+
+            if ts:
+                timeline.append({
+                    "time": ts,
+                    "emotion": label,
+                    "confidence": entry.get("confidence", 0)
+                })
+
+        return jsonify({
+            "distribution": emotion_counts,
+            "timeline": timeline
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
 # ==================================
