@@ -15,9 +15,9 @@ STD_PATH = os.path.join(BASE_DIR, "models", "ser_std.npy")
 print("🎤 Loading Speech Emotion Model...")
 print("Model path:", MODEL_PATH)
 
-ser_model = load_model(MODEL_PATH)
-ser_mean = np.load(MEAN_PATH)
-ser_std = np.load(STD_PATH)
+# ser_model = load_model(MODEL_PATH)
+# ser_mean = np.load(MEAN_PATH)
+# ser_std = np.load(STD_PATH)
 
 print("✅ Speech Emotion Model Loaded!")
 

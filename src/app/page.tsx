@@ -19,6 +19,7 @@ import { useEmotionSocket } from "../hooks/useEmotionSocket";
 import { emotionStyles, Emotion } from "../lib/emotionStyles";
 import BreathingGuide from "../components/BreathingGuide";
 import AnimatedQuote from "../components/AnimatedQuote";
+import AnalyticsButton from "@/components/AnalyticsButton";
 
 export default function HomePage() {
   const webcamRef = useRef<Webcam>(null);
@@ -31,6 +32,7 @@ export default function HomePage() {
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
   const [showBreathingGuide, setShowBreathingGuide] = useState(false);
   const [isWebcamActive, setIsWebcamActive] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
 
   // Get current emotion - properly handle undefined/null
   const emotionLabel = emotion?.label?.toLowerCase() || "default";
@@ -50,6 +52,47 @@ export default function HomePage() {
     const interval = setInterval(captureFrame, 600);
     return () => clearInterval(interval);
   }, [captureFrame]);
+
+  useEffect(() => {
+  if (currentEmotion !== "default") {
+    setIsQuoteLoading(true);
+
+    setTimeout(() => {
+      const newQuote = getQuoteByEmotion(currentEmotion);
+      setCurrentQuote(newQuote);
+      setIsQuoteLoading(false);
+    }, 800); // delay for animation feel
+  }
+}, [currentEmotion]);
+
+  const getQuoteByEmotion = (emotion: string) => {
+  const quotes: Record<string, { quote: string; author: string }[]> = {
+    happy: [
+      { quote: "Happiness is a direction, not a place.", author: "Sydney Harris" },
+      { quote: "Keep smiling, it confuses people.", author: "Unknown" },
+    ],
+    sad: [
+      { quote: "Tears come from the heart.", author: "Leonardo da Vinci" },
+      { quote: "Every storm runs out of rain.", author: "Unknown" },
+    ],
+    angry: [
+      { quote: "Speak when you are calm, not angry.", author: "Unknown" },
+      { quote: "Anger is one letter short of danger.", author: "Eleanor Roosevelt" },
+    ],
+    fear: [
+      { quote: "Do one thing every day that scares you.", author: "Eleanor Roosevelt" },
+    ],
+    neutral: [
+      { quote: "Calm mind brings inner strength.", author: "Dalai Lama" },
+    ],
+    default: [
+      { quote: "Activate the Bio-Sensor or explore the dashboard.", author: "MindMorph" },
+    ],
+  };
+
+  const selected = quotes[emotion] || quotes["default"];
+  return selected[Math.floor(Math.random() * selected.length)];
+};
 
   return (
     <main className="relative min-h-screen w-full overflow-hidden bg-gray-900 text-white transition-colors duration-300">
@@ -127,11 +170,15 @@ export default function HomePage() {
           >
             Confidence: {(confidence * 100).toFixed(0)}%
           </motion.p>
+
+                
+
           <AnimatedQuote
-            quote={currentQuote.quote}
-            author={currentQuote.author}
-            isLoading={isQuoteLoading}
-          />
+  quote={currentQuote.quote}
+  author={currentQuote.author}
+  isLoading={isQuoteLoading}
+  emotion={currentEmotion}
+/>
         </div>
 
         <footer className="absolute bottom-0 w-full h-48 flex items-center justify-center">
@@ -206,6 +253,93 @@ export default function HomePage() {
         isVisible={showBreathingGuide}
         onClose={() => setShowBreathingGuide(false)}
       />
-    </main>
+
+  
+
+
+              <AnimatePresence>
+  {isLaunching && (
+    <motion.div
+      className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {/* Rotating Loader */}
+      <motion.div
+        className="w-40 h-40 rounded-full border-4 border-blue-400 border-t-transparent"
+        animate={{ rotate: 360 }}
+        transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
+      />
+
+      {/* Pulse Ring */}
+      <motion.div
+        className="absolute w-60 h-60 rounded-full border border-blue-500"
+        animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0.1, 0.6] }}
+        transition={{ repeat: Infinity, duration: 2 }}
+      />
+
+      {/* Text */}
+      <motion.p className="mt-8 text-blue-400 text-lg font-mono">
+        Initializing AI Analytics...
+      </motion.p>
+
+      <motion.p
+        className="text-gray-400 text-sm mt-2"
+        animate={{ opacity: [0.4, 1, 0.4] }}
+        transition={{ repeat: Infinity, duration: 1.5 }}
+      >
+        Syncing multimodal signals...
+      </motion.p>
+    </motion.div>
+  )}
+</AnimatePresence>
+
+{/* ================= POPUP NOTIFICATION ================= */}
+<AnimatePresence>
+  {currentEmotion !== "default" && !isLaunching && (
+    <motion.div
+      className="fixed bottom-6 right-6 z-40"
+      initial={{ opacity: 0, y: 80, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 80 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+    >
+      <div
+        onClick={() => {
+          setIsLaunching(true);
+
+          setTimeout(() => {
+            window.open("/dashboard", "_blank");
+            setIsLaunching(false);
+          }, 2500);
+        }}
+        className="cursor-pointer w-72 p-4 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 backdrop-blur-lg shadow-2xl hover:scale-105 transition-all duration-300"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-gray-400">MindMorph AI</span>
+          <span className="text-green-400 text-xs animate-pulse">LIVE</span>
+        </div>
+
+        {/* Content */}
+        <h3 className="text-white font-semibold text-sm">
+          🧠 Emotion Insights Ready
+        </h3>
+
+        <p className="text-gray-400 text-xs mt-1">
+          Your session analytics are available. Click to explore deep insights.
+        </p>
+
+        {/* Action */}
+        <div className="mt-3 text-blue-400 text-xs font-medium">
+          Open Dashboard →
+        </div>
+      </div>
+    </motion.div>
+  )}
+</AnimatePresence>
+
+</main>
   );
 }
